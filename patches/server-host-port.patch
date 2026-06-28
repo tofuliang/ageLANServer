@@ -1,0 +1,177 @@
+diff --git a/server/internal/cmd/root.go b/server/internal/cmd/root.go
+index 2b5f0f4..d172200 100644
+--- a/server/internal/cmd/root.go
++++ b/server/internal/cmd/root.go
+@@ -13,6 +13,7 @@ import (
+ 	"path/filepath"
+ 	"runtime"
+ 	"runtime/debug"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -194,8 +195,13 @@ func runRoot(fs *pflag.FlagSet) error {
+ 	for gameId := range gameSet.Iter() {
+ 		logger.Printf("Game %s:\n", gameId)
+ 		hosts := cfg.GetGameHosts(gameId)
+-		addrs := ip.ResolveHosts(mapset.NewThreadUnsafeSet[string](hosts...))
+-		if addrs.IsEmpty() {
++		targets, err := ip.ParseListenTargets(mapset.NewThreadUnsafeSet[string](hosts...), 443)
++		if err != nil {
++			logger.Printf("\tInvalid host entry: %v\n", err)
++			exitCode = internal.ErrResolveHost
++			return nil
++		}
++		if targets.IsEmpty() {
+ 			logger.Println("\tFailed to resolve host (or it was an IPv6 address)")
+ 			exitCode = internal.ErrResolveHost
+ 			return nil
+@@ -259,7 +265,7 @@ func runRoot(fs *pflag.FlagSet) error {
+ 				mux = router.NewLoggingMiddleware(mux)
+ 			}
+ 		}
+-		for addr := range addrs.Iter() {
++		for target := range targets.Iter() {
+ 			var certFile string
+ 			var keyFile string
+ 			if common.SelfSignedCertGame(gameId) {
+@@ -271,15 +277,15 @@ func runRoot(fs *pflag.FlagSet) error {
+ 			}
+ 			var listenConns []*net.UDPConn
+ 			if announceEnabled {
+-				err, listenConns = ip.QueryConnections(addr, multicastGroups, announcePort)
++				err, listenConns = ip.QueryConnections(target.Addr, multicastGroups, announcePort)
+ 				if err != nil {
+-					logger.Println("\tFailed to listen to UDP connections for address", addr.String())
++					logger.Println("\tFailed to listen to UDP connections for address", target.Addr.String())
+ 					exitCode = internal.ErrAnnounce
+ 					return nil
+ 				}
+ 			}
+ 			server := &http.Server{
+-				Addr:         addr.String() + ":443",
++				Addr:         net.JoinHostPort(target.Addr.String(), strconv.Itoa(target.Port)),
+ 				Handler:      mux,
+ 				ErrorLog:     customLogger,
+ 				IdleTimeout:  time.Second * 30,
+diff --git a/server/internal/ip/ip.go b/server/internal/ip/ip.go
+index 0f8178d..4cd9d1d 100644
+--- a/server/internal/ip/ip.go
++++ b/server/internal/ip/ip.go
+@@ -1,12 +1,60 @@
+ package ip
+ 
+ import (
++	"fmt"
++	"net"
+ 	"net/netip"
++	"strconv"
++	"strings"
+ 
+ 	mapset "github.com/deckarep/golang-set/v2"
+ 	"github.com/luskaner/ageLANServer/common"
+ )
+ 
++type ListenTarget struct {
++	Addr netip.Addr
++	Port int
++}
++
++func ParseListenTargets(hosts mapset.Set[string], defaultPort int) (mapset.Set[ListenTarget], error) {
++	targets := mapset.NewThreadUnsafeSet[ListenTarget]()
++	for host := range hosts.Iter() {
++		parsedTargets, err := parseListenTargets(host, defaultPort)
++		if err != nil {
++			return nil, err
++		}
++		for target := range parsedTargets.Iter() {
++			targets.Add(target)
++		}
++	}
++	return targets, nil
++}
++
++func parseListenTargets(host string, defaultPort int) (mapset.Set[ListenTarget], error) {
++	targets := mapset.NewThreadUnsafeSet[ListenTarget]()
++	resolvedHost := host
++	port := defaultPort
++	if strings.Contains(host, ":") {
++		parsedHost, parsedPort, err := net.SplitHostPort(host)
++		if err != nil {
++			return nil, fmt.Errorf("invalid host entry %q: %w", host, err)
++		}
++		port, err = strconv.Atoi(parsedPort)
++		if err != nil || port < 1 || port > 65535 {
++			return nil, fmt.Errorf("invalid host entry %q: invalid port %q", host, parsedPort)
++		}
++		resolvedHost = parsedHost
++	}
++	addrs := ResolveHosts(mapset.NewThreadUnsafeSet[string](resolvedHost))
++	if addrs.IsEmpty() {
++		return targets, nil
++	}
++	for addr := range addrs.Iter() {
++		targets.Add(ListenTarget{Addr: addr, Port: port})
++	}
++	return targets, nil
++}
++
+ func ResolveHosts(hosts mapset.Set[string]) mapset.Set[netip.Addr] {
+ 	ipAddrs := mapset.NewThreadUnsafeSet[netip.Addr]()
+ 	for host := range hosts.Iter() {
+diff --git a/server/internal/ip/ip_test.go b/server/internal/ip/ip_test.go
+new file mode 100644
+index 0000000..e9f8af2
+--- /dev/null
++++ b/server/internal/ip/ip_test.go
+@@ -0,0 +1,50 @@
++package ip
++
++import (
++	"testing"
++
++	mapset "github.com/deckarep/golang-set/v2"
++)
++
++func TestParseListenTargetsKeepsDefaultPortForPlainHost(t *testing.T) {
++	targets, err := ParseListenTargets(mapset.NewThreadUnsafeSet[string]("0.0.0.0"), 443)
++	if err != nil {
++		t.Fatalf("ParseListenTargets returned error: %v", err)
++	}
++	if targets.Cardinality() != 1 {
++		t.Fatalf("expected 1 target, got %d", targets.Cardinality())
++	}
++	for target := range targets.Iter() {
++		if target.Addr.String() != "0.0.0.0" {
++			t.Fatalf("expected addr 0.0.0.0, got %s", target.Addr)
++		}
++		if target.Port != 443 {
++			t.Fatalf("expected port 443, got %d", target.Port)
++		}
++	}
++}
++
++func TestParseListenTargetsUsesExplicitPortWhenProvided(t *testing.T) {
++	targets, err := ParseListenTargets(mapset.NewThreadUnsafeSet[string]("0.0.0.0:1234"), 443)
++	if err != nil {
++		t.Fatalf("ParseListenTargets returned error: %v", err)
++	}
++	if targets.Cardinality() != 1 {
++		t.Fatalf("expected 1 target, got %d", targets.Cardinality())
++	}
++	for target := range targets.Iter() {
++		if target.Addr.String() != "0.0.0.0" {
++			t.Fatalf("expected addr 0.0.0.0, got %s", target.Addr)
++		}
++		if target.Port != 1234 {
++			t.Fatalf("expected port 1234, got %d", target.Port)
++		}
++	}
++}
++
++func TestParseListenTargetsRejectsInvalidHostPort(t *testing.T) {
++	_, err := ParseListenTargets(mapset.NewThreadUnsafeSet[string]("0.0.0.0:not-a-port"), 443)
++	if err == nil {
++		t.Fatal("expected error for invalid host:port entry")
++	}
++}

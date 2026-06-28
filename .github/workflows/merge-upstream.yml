@@ -1,0 +1,96 @@
+name: merge-upstream
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.WORKFLOW_TOKEN }}
+
+      - name: Set git identity
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Backup fork custom files
+        run: |
+          backup_root=/tmp/fork-files
+          rm -rf "$backup_root"
+          mkdir -p "$backup_root/.github/workflows"
+
+          test -f .github/workflows/releaser-patched.yml
+          test -f .github/workflows/merge-upstream.yml
+          test -d patches
+
+          cp .github/workflows/releaser-patched.yml "$backup_root/.github/workflows/"
+          cp .github/workflows/merge-upstream.yml "$backup_root/.github/workflows/"
+          cp -R patches "$backup_root/"
+
+      - name: Sync from upstream
+        env:
+          UPSTREAM_URL: https://github.com/luskaner/ageLANServer.git
+          TARGET_BRANCH: main
+        run: |
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "$UPSTREAM_URL"
+          else
+            git remote add upstream "$UPSTREAM_URL"
+          fi
+
+          git fetch --prune upstream "+refs/heads/$TARGET_BRANCH:refs/remotes/upstream/$TARGET_BRANCH"
+          git fetch --prune upstream "+refs/tags/*:refs/tags/*"
+          BEFORE=$(git rev-parse HEAD)
+          git reset --hard "upstream/$TARGET_BRANCH"
+          git clean -fd
+          AFTER=$(git rev-parse HEAD)
+
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
+          echo "after=$AFTER" >> "$GITHUB_OUTPUT"
+
+      - name: Restore fork custom files
+        run: |
+          backup_root=/tmp/fork-files
+          mkdir -p .github/workflows
+
+          cp "$backup_root/.github/workflows/releaser-patched.yml" .github/workflows/
+          cp "$backup_root/.github/workflows/merge-upstream.yml" .github/workflows/
+          rm -rf patches
+          cp -R "$backup_root/patches" ./
+
+      - name: Verify preserved files
+        run: |
+          backup_root=/tmp/fork-files
+          test -f .github/workflows/releaser-patched.yml
+          test -f .github/workflows/merge-upstream.yml
+          test -d patches
+          test -n "$(find patches -type f)"
+          diff -qr "$backup_root/patches" patches
+
+      - name: Commit and push if changed
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "chore: sync upstream"
+          else
+            echo "No branch changes to commit"
+          fi
+
+          for tag in $(git ls-remote --tags --refs origin | awk -F/ '{print $3}'); do
+            if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              git push origin ":refs/tags/$tag"
+            fi
+          done
+
+          git push origin --force HEAD:main
+          git push origin --force --tags
