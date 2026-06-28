@@ -2,9 +2,10 @@ diff --git a/tools/scripts/internal/goreleaser/project.go b/tools/scripts/intern
 index c0971c2..5eee6d1 100644
 --- a/tools/scripts/internal/goreleaser/project.go
 +++ b/tools/scripts/internal/goreleaser/project.go
-@@ -32,6 +32,25 @@ func GenerateConfig(archives ...*Archive) error {
+@@ -32,6 +32,26 @@ func GenerateConfig(archives ...*Archive) error {
  		project.Archives = append(project.Archives, a.Archives(archiveBuilds)...)
  	}
++	project.Env = []string{"CGO_ENABLED=0"}
  	project.UniversalBinaries = universalBinaries(project.Builds)
 +	project.DockersV2 = []config.DockerV2{
 +		{
