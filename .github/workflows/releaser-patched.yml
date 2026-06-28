@@ -24,6 +24,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
+      - name: Restore fork patch files
+        shell: bash
+        run: |
+          mkdir -p patches
+          git show origin/main:patches/server-host-port.patch > patches/server-host-port.patch
+          git show origin/main:patches/goreleaser-docker.patch > patches/goreleaser-docker.patch
+
       - name: Validate release ref
         shell: bash
         run: |
