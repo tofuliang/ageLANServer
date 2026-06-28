@@ -1,7 +1,8 @@
 diff --git a/tools/scripts/internal/goreleaser/project.go b/tools/scripts/internal/goreleaser/project.go
+index c0971c2..5eee6d1 100644
 --- a/tools/scripts/internal/goreleaser/project.go
 +++ b/tools/scripts/internal/goreleaser/project.go
-@@ -32,6 +32,25 @@
+@@ -32,6 +32,25 @@ func GenerateConfig(archives ...*Archive) error {
  		project.Archives = append(project.Archives, a.Archives(archiveBuilds)...)
  	}
  	project.UniversalBinaries = universalBinaries(project.Builds)
@@ -28,6 +29,7 @@ diff --git a/tools/scripts/internal/goreleaser/project.go b/tools/scripts/intern
  	project.Checksum = config.Checksum{
  		NameTemplate: `{{ .ProjectName }}_{{ .RawVersion }}_checksums.txt`,
 diff --git a/tools/server-docker/server/Dockerfile b/tools/server-docker/server/Dockerfile
+index ccb5499..86a9c17 100644
 --- a/tools/server-docker/server/Dockerfile
 +++ b/tools/server-docker/server/Dockerfile
 @@ -1,28 +1,13 @@
@@ -50,8 +52,8 @@ diff --git a/tools/server-docker/server/Dockerfile b/tools/server-docker/server/
 -COPY --from=compiler /app/build/server .
 -RUN upx --lzma server
 -# Execute
-+ARG TARGETPLATFORM
  FROM scratch
++ARG TARGETPLATFORM
  EXPOSE 443
  VOLUME /app/resources/config
  VOLUME /app/resources/certificates
@@ -63,5 +65,5 @@ diff --git a/tools/server-docker/server/Dockerfile b/tools/server-docker/server/
 \ No newline at end of file
 +COPY server/resources/config resources/config
 +COPY server/resources/responses resources/responses
-+COPY --chmod=0755 $TARGETPLATFORM/server/server ./server
++COPY --chmod=0755 $TARGETPLATFORM/server ./server
 +ENTRYPOINT ["./server"]
