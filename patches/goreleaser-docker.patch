@@ -63,5 +63,5 @@ diff --git a/tools/server-docker/server/Dockerfile b/tools/server-docker/server/
 \ No newline at end of file
 +COPY server/resources/config resources/config
 +COPY server/resources/responses resources/responses
-+COPY --chmod=0755 $TARGETPLATFORM/server ./server
++COPY --chmod=0755 $TARGETPLATFORM/server/server ./server
 +ENTRYPOINT ["./server"]
