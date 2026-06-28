@@ -50,8 +50,8 @@ diff --git a/tools/server-docker/server/Dockerfile b/tools/server-docker/server/
 -COPY --from=compiler /app/build/server .
 -RUN upx --lzma server
 -# Execute
-ARG TARGETPLATFORM
-FROM scratch
++ARG TARGETPLATFORM
+ FROM scratch
  EXPOSE 443
  VOLUME /app/resources/config
  VOLUME /app/resources/certificates
